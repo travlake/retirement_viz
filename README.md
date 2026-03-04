@@ -21,4 +21,6 @@ A more detailed version developed separately (not built live in lecture). Featur
 
 ## Usage
 
-Open any `.html` file directly in a browser. No build step or server required (`saving_final.html` fetches its data from a remote URL, so it does need internet access).
+You can try the final version online at https://www.travislakejohnson.com/teaching/retirementviz/.
+
+To run locally, click the green **Code** button above and select **Download ZIP**. Unzip the folder and open any `.html` file directly in a browser — no install or setup required. Note that `saving_final.html` needs internet access since it fetches its data from a remote URL.
