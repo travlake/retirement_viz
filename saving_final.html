@@ -1,0 +1,501 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RetirementViz - Cumulative Returns</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 16px; color: #222; background-color: #f9fafb; }
+        h1 { font-size: 20px; margin: 0 0 12px; }
+        .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 16px; }
+        .control { display: flex; flex-direction: column; gap: 6px; }
+        label { font-size: 14px; color: #444; }
+        input[type="range"] { width: 260px; }
+        input[type="number"] { width: 80px; padding: 6px; border: 1px solid #ccc; border-radius: 4px; }
+        .control button { padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; background-color: #f0f0f0; cursor: pointer; }
+        .row { display: flex; gap: 16px; align-items: center; }
+        .note { font-size: 13px; color: #666; }
+        #chartWrap { max-width: 1000px; }
+        canvas { background: #fff; border: 1px solid #eee; border-radius: 6px; }
+        .summary { font-size: 13px; color: #333; margin: 8px 0 4px; }
+        .error { color: #b00020; font-size: 13px; }
+        .description {
+            font-size: 14px;
+            color: #444;
+            max-width: 1000px;
+            margin-bottom: 16px;
+            background-color: #f0f4f8;
+            border: 1px solid #e0e6ec;
+            border-radius: 6px;
+            padding: 10px 12px;
+            line-height: 1.5;
+        }
+        .description p { margin: 0; }
+        .stats-container { display: flex; flex-wrap: wrap; gap: 16px; }
+        .stats-box { margin-top: 10px; border: 1px solid #e5e7eb; background: #fafafa; border-radius: 6px; padding: 10px 12px; max-width: 550px; font-size: 14px; line-height: 1.6; }
+        .stats-box h3 { margin: 0 0 6px; font-size: 15px; color: #111; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+        .stats-grid div { display: flex; justify-content: space-between; }
+        .stats-label { color: #555; }
+        .stats-value { font-weight: 600; color: #111; }
+        .bottom-controls { max-width: 1000px; text-align: left; margin-top: 16px; }
+        .bottom-controls button { padding: 8px 16px; border: 1px solid #ccc; border-radius: 4px; background-color: #f0f0f0; cursor: pointer; font-size: 15px; }
+    </style>
+</head>
+<body>
+<h1>Retirement Portfolio Simulator</h1>
+
+<div class="controls">
+    <div class="control">
+        <label for="equityWeight">Equity weight (US market): <b><span id="equityPct">67</span>%</b></label>
+        <input id="equityWeight" type="range" min="0" max="100" step="1" value="67" />
+        <div class="note">Risk-free weight auto: <b><span id="rfPct">33</span>%</b></div>
+    </div>
+    <div class="control">
+        <label for="years">Last T years</label>
+        <input id="years" type="number" min="1" max="99" step="1" value="35" />
+        <div class="note">Data end determined by file (monthly, yyyymm).</div>
+    </div>
+    <div class="control">
+        <label for="monthlyContrib">Monthly contribution ($)</label>
+        <input id="monthlyContrib" type="number" min="0" step="10" value="583" />
+    </div>
+    <div class="control">
+        <label for="contribGrowth">Annualized contribution growth (%)</label>
+        <input id="contribGrowth" type="number" min="0" max="10" step="0.1" value="4" />
+    </div>
+</div>
+
+<div class="description">
+    <p><b>Simulation method:</b> The gray lines show 100 simulated portfolio paths. Each path is constructed by randomly drawing monthly market returns (with replacement) from the full historical data series, while preserving the actual sequence of risk-free rates observed over the selected T-year window. This "bootstrapping" method simulates a wide range of outcomes your portfolio might have experienced under different historical market sequences.</p>
+</div>
+
+<div class="summary" id="summary"></div>
+<div class="error" id="err"></div>
+
+<div class="stats-container">
+    <div class="stats-box" id="statsBox" style="display:none;">
+        <h3>Portfolio return statistics (historical)</h3>
+        <div class="stats-grid">
+            <div><span class="stats-label">Mean (annualized)</span><span class="stats-value" id="statMeanAnn">—</span></div>
+            <div><span class="stats-label">Std dev (annualized)</span><span class="stats-value" id="statSdAnn">—</span></div>
+            <div><span class="stats-label">Skewness (monthly)</span><span class="stats-value" id="statSkew">—</span></div>
+            <div><span class="stats-label">Kurtosis (raw, monthly)</span><span class="stats-value" id="statKurt">—</span></div>
+            <div><span class="stats-label">Std dev (monthly)</span><span class="stats-value" id="statSdMon">—</span></div>
+            <div><span class="stats-label">Max drawdown</span><span class="stats-value" id="statMdd">—</span></div>
+        </div>
+    </div>
+
+    <div class="stats-box" id="simStatsBox" style="display:none;">
+        <h3>Simulated final portfolio value ($, <span id="simCount"></span> runs)</h3>
+        <div class="stats-grid" style="grid-template-columns: 1fr 1.7fr;">
+            <div><span class="stats-label">Mean</span><span class="stats-value" id="simMean">—</span></div>
+            <div><span class="stats-label">Min</span><span class="stats-value" id="simMin">—</span></div>
+            <div><span class="stats-label">Std dev</span><span class="stats-value" id="simSd">—</span></div>
+            <div><span class="stats-label">5th percentile</span><span class="stats-value" id="simP5">—</span></div>
+            <div></div> <!-- Empty div for spacing -->
+            <div><span class="stats-label">25th percentile</span><span class="stats-value" id="simP25">—</span></div>
+            <div></div> <!-- Empty div for spacing -->
+            <div><span class="stats-label">50th percentile</span><span class="stats-value" id="simP50">—</span></div>
+            <div></div> <!-- Empty div for spacing -->
+            <div><span class="stats-label">75th percentile</span><span class="stats-value" id="simP75">—</span></div>
+            <div></div> <!-- Empty div for spacing -->
+            <div><span class="stats-label">95th percentile</span><span class="stats-value" id="simP95">—</span></div>
+            <div></div> <!-- Empty div for spacing -->
+            <div><span class="stats-label">Max</span><span class="stats-value" id="simMax">—</span></div>
+        </div>
+    </div>
+</div>
+
+<div id="chartWrap">
+    <canvas id="cumChart" height="420"></canvas>
+</div>
+
+<div class="bottom-controls">
+    <button id="scaleToggleBtn">Switch to Linear Scale</button>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<script>
+    (function() {
+        const equitySlider = document.getElementById('equityWeight');
+        const equityPctSpan = document.getElementById('equityPct');
+        const rfPctSpan = document.getElementById('rfPct');
+        const yearsInput = document.getElementById('years');
+        const monthlyContribInput = document.getElementById('monthlyContrib');
+        const contribGrowthInput = document.getElementById('contribGrowth');
+        const scaleToggleBtn = document.getElementById('scaleToggleBtn');
+        const summary = document.getElementById('summary');
+        const errBox = document.getElementById('err');
+
+        // Historical stats elements
+        const statsBox = document.getElementById('statsBox');
+        const statMeanAnn = document.getElementById('statMeanAnn');
+        const statSdAnn = document.getElementById('statSdAnn');
+        const statSkew = document.getElementById('statSkew');
+        const statSdMon = document.getElementById('statSdMon');
+        const statMdd = document.getElementById('statMdd');
+        const statKurt = document.getElementById('statKurt');
+
+        // Simulation stats elements
+        const simStatsBox = document.getElementById('simStatsBox');
+        const simCount = document.getElementById('simCount');
+        const simMean = document.getElementById('simMean');
+        const simSd = document.getElementById('simSd');
+        const simMin = document.getElementById('simMin');
+        const simP5 = document.getElementById('simP5');
+        const simP25 = document.getElementById('simP25');
+        const simP50 = document.getElementById('simP50');
+        const simP75 = document.getElementById('simP75');
+        const simP95 = document.getElementById('simP95');
+        const simMax = document.getElementById('simMax');
+
+        let rawData = [];
+        let chart;
+        let yAxisType = 'logarithmic';
+        let lastHistoricalResult = {};
+        let lastSimulationResult = {};
+
+        function parseCSV(text) {
+            const lines = text.trim().split(/\r?\n/);
+            const header = lines[0].split(',').map(s => s.trim());
+            const idxMonth = header.indexOf('month');
+            const idxMktrf = header.indexOf('mktrf');
+            const idxRf = header.indexOf('rf');
+            const out = [];
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line || line.startsWith('//')) continue;
+                const parts = line.split(',');
+                if (parts.length < 3) continue;
+                const month = parts[idxMonth].trim();
+                const mktrf = parseFloat(parts[idxMktrf]);
+                const rf = parseFloat(parts[idxRf]);
+                if (!isFinite(mktrf) || !isFinite(rf)) continue;
+                out.push({ month, mktrf, rf });
+            }
+            return out;
+        }
+
+        function monthStringToDate(yyyymm) {
+            const s = String(yyyymm);
+            const y = parseInt(s.slice(0, 4), 10);
+            const m = parseInt(s.slice(4, 6), 10);
+            return new Date(y, m - 1, 1);
+        }
+
+        function formatYYYYMM(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            return `${y}-${m}`;
+        }
+
+        function updateSummary(wPct, Tyears, data, startIdx, monthlyContrib, contribGrowth) {
+            if (!data.length) { summary.textContent = ''; return; }
+            const start = monthStringToDate(data[startIdx].month);
+            const end = monthStringToDate(data[data.length - 1].month);
+            summary.textContent = `Portfolio: ${wPct}% equity / ${100 - wPct}% risk-free | Contributions: $${monthlyContrib}/month growing at ${contribGrowth}%/year | Window: ${formatYYYYMM(start)} to ${formatYYYYMM(end)} (last ${Tyears} years)`;
+        }
+
+        function computePortfolioSeries(data, equityWeightPct, Tyears, monthlyContrib, contribGrowth) {
+            const w = Math.max(0, Math.min(100, equityWeightPct)) / 100;
+            const N = data.length;
+            if (N === 0) return { labels: [], values: [], returns: [] };
+            const monthsToKeep = Math.min(N, Math.max(1, Math.round(Tyears * 12)));
+            const startIdx = N - monthsToKeep;
+            const slice = data.slice(startIdx);
+
+            const labels = [];
+            const cum = [];
+            const rets = [];
+            let level = 0.0;
+            const monthlyContribGrowthFactor = Math.pow(1 + contribGrowth / 100, 1 / 12);
+            let currentMonthlyContrib = monthlyContrib;
+
+            for (const row of slice) {
+                const r_p = w * row.mktrf + row.rf;
+                level *= (1 + r_p);
+                level += currentMonthlyContrib;
+                currentMonthlyContrib *= monthlyContribGrowthFactor;
+                labels.push(formatYYYYMM(monthStringToDate(row.month)));
+                cum.push(level);
+                rets.push(r_p);
+            }
+            return { labels, values: cum, returns: rets, startIdx };
+        }
+
+        function computeStats(returns, cumValues) {
+            const n = returns.length;
+            if (n < 4) return null;
+            const mean = returns.reduce((a,b)=>a+b,0) / n;
+            let varSum = 0;
+            for (const r of returns) varSum += (r - mean) * (r - mean);
+            const variance = varSum / (n - 1);
+            const sd = Math.sqrt(Math.max(0, variance));
+            let skew = 0, kurtosis = 0;
+
+            if (sd > 0) {
+                let m3_sum = 0, m4_sum = 0;
+                for (const r of returns) {
+                    m3_sum += Math.pow(r - mean, 3);
+                    m4_sum += Math.pow(r - mean, 4);
+                }
+                skew = (n * m3_sum) / ((n - 1) * (n - 2) * Math.pow(sd, 3));
+                const m4 = m4_sum / n;
+                kurtosis = m4 / Math.pow(variance, 2);
+            }
+
+            const annMean = mean * 12;
+            const annSd = sd * Math.sqrt(12);
+            let peak = -Infinity, maxDD = 0;
+            for (const v of cumValues) {
+                peak = Math.max(peak, v);
+                if (peak > 0) maxDD = Math.max(maxDD, (peak - v) / peak);
+            }
+            return { annMean, annSd, skew, kurtosis, sd, maxDD };
+        }
+
+        function runSimulations(N_sim, data, equityWeightPct, Tyears, monthlyContrib, contribGrowth) {
+            const w = Math.max(0, Math.min(100, equityWeightPct)) / 100;
+            const fullN = data.length;
+            if (fullN === 0) return { allPaths: [], finalValues: [] };
+
+            const monthsToSim = Math.min(fullN, Math.max(1, Math.round(Tyears * 12)));
+            const startIdx = fullN - monthsToSim;
+            const historicalRf = data.slice(startIdx).map(row => row.rf);
+            const allPaths = [], finalValues = [];
+
+            for (let i = 0; i < N_sim; i++) {
+                const path = [];
+                let level = 0.0;
+                const monthlyContribGrowthFactor = Math.pow(1 + contribGrowth / 100, 1 / 12);
+                let currentMonthlyContrib = monthlyContrib;
+
+                for (let j = 0; j < monthsToSim; j++) {
+                    const randomMktrf = data[Math.floor(Math.random() * fullN)].mktrf;
+                    const r_p = w * randomMktrf + historicalRf[j];
+                    level = (level * (1 + r_p)) + currentMonthlyContrib;
+                    currentMonthlyContrib *= monthlyContribGrowthFactor;
+                    path.push(level);
+                }
+                allPaths.push(path);
+                finalValues.push(level);
+            }
+            return { allPaths, finalValues };
+        }
+
+        function computeFinalValueStats(finalValues) {
+            const n = finalValues.length;
+            if (n === 0) return null;
+            finalValues.sort((a, b) => a - b);
+            const mean = finalValues.reduce((a, b) => a + b, 0) / n;
+            let varSum = 0;
+            for (const v of finalValues) varSum += (v - mean) * (v - mean);
+            const sd = n > 1 ? Math.sqrt(varSum / (n - 1)) : 0;
+            const getPercentile = (p) => {
+                const pos = (n - 1) * p;
+                const base = Math.floor(pos);
+                const rest = pos - base;
+                return finalValues[base] + rest * (finalValues[base + 1] - finalValues[base]);
+            };
+            return {
+                mean, sd, min: finalValues[0], p5: getPercentile(0.05), p25: getPercentile(0.25),
+                p50: getPercentile(0.50), p75: getPercentile(0.75), p95: getPercentile(0.95), max: finalValues[n - 1]
+            };
+        }
+
+        function fmtPct(x) { return (x * 100).toFixed(2) + '%'; }
+        function fmtDollar(x) { return '$' + x.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0}); }
+        function fmtShortDollar(x) {
+            if (x >= 1e6) return '$' + (x/1e6).toFixed(2) + 'm';
+            if (x >= 1e3) return '$' + (x/1e3).toFixed(1) + 'k';
+            return fmtDollar(x);
+        }
+
+        function updateStatsBox(stats) {
+            if (!stats) { statsBox.style.display = 'none'; return; }
+            statsBox.style.display = 'block';
+            statMeanAnn.textContent = fmtPct(stats.annMean);
+            statSdAnn.textContent = fmtPct(stats.annSd);
+            statSkew.textContent = (isFinite(stats.skew) ? stats.skew.toFixed(2) : '—');
+            statKurt.textContent = (isFinite(stats.kurtosis) ? stats.kurtosis.toFixed(2) : '—');
+            statSdMon.textContent = fmtPct(stats.sd);
+            statMdd.textContent = fmtPct(stats.maxDD);
+        }
+
+        function updateSimStatsBox(stats, N_sim) {
+            if (!stats) { simStatsBox.style.display = 'none'; return; }
+            simStatsBox.style.display = 'block';
+            simCount.textContent = N_sim;
+            simMean.textContent = fmtDollar(stats.mean);
+            simSd.textContent = fmtDollar(stats.sd);
+            simMin.textContent = fmtDollar(stats.min);
+            simP5.textContent = fmtDollar(stats.p5);
+            simP25.textContent = fmtDollar(stats.p25);
+            simP50.textContent = fmtDollar(stats.p50);
+            simP75.textContent = fmtDollar(stats.p75);
+            simP95.textContent = fmtDollar(stats.p95);
+            simMax.textContent = fmtDollar(stats.max);
+        }
+
+        const finalValuePlugin = {
+            id: 'finalValuePlugin',
+            afterDatasetsDraw(chart, args, pluginOptions) {
+                const { ctx, chartArea, scales } = chart;
+                const ds = chart.data.datasets?.[0];
+                if (!ds?.data?.length) return;
+                const lastVal = ds.data[ds.data.length - 1];
+                const y = scales.y.getPixelForValue(lastVal);
+                const x = chartArea.right - 10;
+                ctx.save();
+                ctx.fillStyle = '#111';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText('Final: ' + fmtDollar(lastVal), x, y - 5);
+                ctx.restore();
+            }
+        };
+
+        function renderChart(labels, values, simulationPaths = []) {
+            const ctx = document.getElementById('cumChart');
+            const historicalDataset = {
+                label: 'Historical Path',
+                data: values,
+                borderColor: '#2563eb',
+                backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                borderWidth: 2,
+                pointRadius: 0,
+                fill: false,
+                tension: 0.08,
+            };
+            const datasets = [historicalDataset];
+            for (const path of simulationPaths) {
+                datasets.push({
+                    label: 'Simulated Path',
+                    data: path,
+                    borderColor: 'rgba(156, 163, 175, 0.36)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0.08,
+                });
+            }
+
+            const options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { maxTicksLimit: 16, font: { size: 13 } } },
+                    y: {
+                        type: yAxisType,
+                        ticks: { callback: (v) => '$' + v.toLocaleString(), font: { size: 13 } },
+                        title: { display: true, text: `Portfolio Value (${yAxisType === 'logarithmic' ? 'log' : 'linear'} scale)`, font: { size: 14 } }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    title: { display: true, text: 'Portfolio Growth Over Time', font: {size: 16} },
+                    tooltip: {
+                        filter: (item) => item.datasetIndex === 0, // Only show tooltip for historical path
+                        callbacks: { label: ctx => ` ${fmtDollar(ctx.parsed.y)}` }
+                    }
+                }
+            };
+
+            if (chart) {
+                if (chart.config.options.scales.y.type !== yAxisType) {
+                    chart.destroy();
+                    chart = new Chart(ctx, { type: 'line', data: { labels, datasets }, options, plugins: [finalValuePlugin] });
+                } else {
+                    chart.data.labels = labels;
+                    chart.data.datasets = datasets;
+                    chart.update();
+                }
+            } else {
+                chart = new Chart(ctx, { type: 'line', data: { labels, datasets }, options, plugins: [finalValuePlugin] });
+                ctx.parentElement.style.height = '480px';
+            }
+        }
+
+        function onControlsChange(recalculate = true) {
+            errBox.textContent = '';
+            const wPct = parseInt(equitySlider.value, 10);
+            const Tyears = parseInt(yearsInput.value, 10);
+            const monthlyContrib = parseFloat(monthlyContribInput.value);
+            const contribGrowth = parseFloat(contribGrowthInput.value);
+            if (!rawData.length || !isFinite(Tyears) || Tyears < 1) return;
+
+            if (recalculate) {
+                // Historical Path
+                lastHistoricalResult = computePortfolioSeries(rawData, wPct, Tyears, monthlyContrib, contribGrowth);
+                if (!lastHistoricalResult.labels.length) { errBox.textContent = 'No data to plot.'; return; }
+
+                // Simulations
+                const N_SIM = 100;
+                lastSimulationResult = runSimulations(N_SIM, rawData, wPct, Tyears, monthlyContrib, contribGrowth);
+            }
+
+            if (!lastHistoricalResult.labels || !lastSimulationResult.finalValues) return;
+
+            const finalValueStats = computeFinalValueStats(lastSimulationResult.finalValues);
+
+            // Skip first 12 months for plotting to avoid initial log-scale distortion
+            const plotLabels = lastHistoricalResult.labels.length > 12 ? lastHistoricalResult.labels.slice(12) : lastHistoricalResult.labels;
+            const plotValues = lastHistoricalResult.values.length > 12 ? lastHistoricalResult.values.slice(12) : lastHistoricalResult.values;
+            const plotPaths = lastSimulationResult.allPaths.map(p => p.length > 12 ? p.slice(12) : p);
+
+            // Render
+            renderChart(plotLabels, plotValues, plotPaths);
+            updateSummary(wPct, Tyears, rawData, lastHistoricalResult.startIdx, monthlyContrib, contribGrowth);
+            updateStatsBox(computeStats(lastHistoricalResult.returns, lastHistoricalResult.values));
+            updateSimStatsBox(finalValueStats, 100);
+        }
+
+        // --- Event Listeners ---
+        equitySlider.addEventListener('input', () => {
+            equityPctSpan.textContent = equitySlider.value;
+            rfPctSpan.textContent = 100 - parseInt(equitySlider.value, 10);
+        });
+        equitySlider.addEventListener('change', onControlsChange);
+        yearsInput.addEventListener('change', onControlsChange);
+        monthlyContribInput.addEventListener('change', onControlsChange);
+        contribGrowthInput.addEventListener('change', onControlsChange);
+        scaleToggleBtn.addEventListener('click', () => {
+            if (yAxisType === 'logarithmic') {
+                yAxisType = 'linear';
+                scaleToggleBtn.textContent = 'Switch to Log Scale';
+            } else {
+                yAxisType = 'logarithmic';
+                scaleToggleBtn.textContent = 'Switch to Linear Scale';
+            }
+            onControlsChange(false); // Only re-render, do not recalculate
+        });
+
+        // --- Load data and initialize ---
+        fetch('https://www.travislakejohnson.com/teaching/retirementviz/mktrf.csv')
+            .then(r => {
+                if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+                return r.text();
+            })
+            .then(text => {
+                try {
+                    rawData = parseCSV(text);
+                    if (!rawData.length) throw new Error('Parsed zero rows from CSV');
+                    onControlsChange(); // Initial calculation
+                } catch (e) {
+                    console.error('Error processing data:', e);
+                    errBox.textContent = 'Failed to process data from mktrf.csv.';
+                }
+            })
+            .catch(e => {
+                console.error('Failed to load mktrf.csv:', e);
+                errBox.textContent = 'Failed to load mktrf.csv.';
+            });
+    })();
+</script>
+</body>
+</html>
+
